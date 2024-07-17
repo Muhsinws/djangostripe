@@ -2,14 +2,16 @@ import stripe
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.http.response import JsonResponse, HttpResponse  # updated
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.models import User  # new
+from django.contrib.auth import logout
 
 from subscriptions.models import StripeCustomer  # new
 
 @login_required
 def home(request):
+    user = request.user
     try:
         # Retrieve the subscription & product
         stripe_customer = StripeCustomer.objects.get(user=request.user)
@@ -24,6 +26,7 @@ def home(request):
         return render(request, 'home.html', {
             'subscription': subscription,
             'product': product,
+            'user' : user,
         })
 
     except StripeCustomer.DoesNotExist:
@@ -37,12 +40,20 @@ def stripe_config(request):
         return JsonResponse(stripe_config, safe=False)
 
 
-@csrf_exempt
 def create_checkout_session(request):
     if request.method == 'GET':
         domain_url = 'http://localhost:8000/'
         stripe.api_key = settings.STRIPE_SECRET_KEY
         try:
+            # Determine which price ID to use based on user selection or other logic
+            price_id = settings.STRIPE_PRICE_ID_BASIC  # Example: Basic plan by default
+            
+            # Example: You can determine the price_id based on user input or other logic
+            if request.GET.get('plan') == 'standard':
+                price_id = settings.STRIPE_PRICE_ID_STANDARD
+            elif request.GET.get('plan') == 'premium':
+                price_id = settings.STRIPE_PRICE_ID_PREMIUM
+            
             checkout_session = stripe.checkout.Session.create(
                 client_reference_id=request.user.id if request.user.is_authenticated else None,
                 success_url=domain_url + 'success?session_id={CHECKOUT_SESSION_ID}',
@@ -51,7 +62,7 @@ def create_checkout_session(request):
                 mode='subscription',
                 line_items=[
                     {
-                        'price': settings.STRIPE_PRICE_ID,
+                        'price': price_id,
                         'quantity': 1,
                     }
                 ]
@@ -59,6 +70,7 @@ def create_checkout_session(request):
             return JsonResponse({'sessionId': checkout_session['id']})
         except Exception as e:
             return JsonResponse({'error': str(e)})
+
         
         
 @login_required
@@ -109,3 +121,9 @@ def stripe_webhook(request):
         print(user.username + ' just subscribed.')
 
     return HttpResponse(status=200)
+
+
+
+def logout_view(request):
+    logout(request)
+    return redirect('subscriptions-home')
